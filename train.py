@@ -119,6 +119,3 @@ def train(max_eps=5, gamma=0.99):
             'Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
     env.close()
 
-
-if __name__ == '__main__':
-    train()
