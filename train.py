@@ -43,7 +43,23 @@ class ActorCriticModel(Model):
         return p, v
 
 
-def train(max_eps=5):
+def sample_action(action_space_size, probs, use_max=False):
+    if use_max:
+        return np.argmax(probs)
+    else:
+        return np.random.choice(action_space_size, p=probs/probs.sum())
+
+
+def compute_discounted_rewards(rewards, gamma):
+    discounted_reward = 0
+    discounted_rewards = []
+    for reward in rewards[::-1]:
+        discounted_reward = gamma * discounted_reward + reward
+        discounted_rewards.append([discounted_reward])
+    return discounted_rewards[::-1]
+
+
+def train(max_eps=5, gamma=0.99):
     env = gym.make('Breakout-v0')
     state_shape = env.observation_space.shape
     action_space_size = env.action_space.n
@@ -53,11 +69,26 @@ def train(max_eps=5):
     for eps in range(max_eps):
         done = False
         state = env.reset()
+        actions, rewards, states = [], [], []
         while not done:
             env.render()
-            action = env.action_space.sample()
+            action_dist, _ = model(tf.convert_to_tensor(
+                [state], dtype=tf.float32))
+            print(action_dist.numpy()[0])
+            action = sample_action(action_space_size, action_dist.numpy()[0])
             next_state, reward, done, _ = env.step(action)
+            actions.append(action)
+            states.append(state)
+            rewards.append(reward)
             state = next_state
+        # Calculate loss and gradients
+        with tf.GradientTape() as tape:
+            probs_raw, vals = model(
+                tf.convert_to_tensor(states, dtype=tf.float32))
+            probs = tf.clip_by_value(probs_raw, 1e-10, 1-1e-10)
+            log_probs = tf.math.log(probs)
+            q_vals = tf.convert_to_tensor(
+                compute_discounted_rewards(rewards, gamma))
         print('Finished {0}'.format(eps))
     env.close()
 
