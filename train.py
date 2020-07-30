@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 import tensorflow as tf
+from tensorflow import optimizers
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Conv2D, BatchNormalization, Flatten
 
@@ -59,22 +60,37 @@ def compute_discounted_rewards(rewards, gamma):
     return discounted_rewards[::-1]
 
 
+def eval(model, env, max_eps, action_space_size):
+    total_reward = 0.0
+    for _ in range(max_eps):
+        done = False
+        state = env.reset()
+        while not done:
+            action_dist, _ = model(tf.convert_to_tensor([state]))
+            action = sample_action(
+                action_space_size, action_dist.numpy()[0], use_max=True)
+            state, reward, done, _ = env.step(action)
+            total_reward += reward
+    avg_reward = total_reward / max_eps
+    return avg_reward
+
+
 def train(max_eps=5, gamma=0.99):
     env = gym.make('Breakout-v0')
+    eval_env = gym.make('Breakout-v0')
     state_shape = env.observation_space.shape
     action_space_size = env.action_space.n
     print('Construct model with action space size {0} and state shape {1}'.format(
         action_space_size, state_shape))
     model = ActorCriticModel(state_shape, action_space_size)
+    optimizer = tf.optimizers.Adam(learning_rate=1e-3)
     for eps in range(max_eps):
         done = False
         state = env.reset()
         actions, rewards, states = [], [], []
         while not done:
-            env.render()
             action_dist, _ = model(tf.convert_to_tensor(
                 [state], dtype=tf.float32))
-            print(action_dist.numpy()[0])
             action = sample_action(action_space_size, action_dist.numpy()[0])
             next_state, reward, done, _ = env.step(action)
             actions.append(action)
@@ -88,8 +104,19 @@ def train(max_eps=5, gamma=0.99):
             probs = tf.clip_by_value(probs_raw, 1e-10, 1-1e-10)
             log_probs = tf.math.log(probs)
             q_vals = tf.convert_to_tensor(
-                compute_discounted_rewards(rewards, gamma))
-        print('Finished {0}'.format(eps))
+                compute_discounted_rewards(rewards, gamma), dtype=tf.float32)
+            action_onehot = tf.one_hot(actions, action_space_size)
+            advantage = q_vals - vals
+            val_loss = advantage ** 2
+            entropy_loss = -tf.reduce_sum(probs, log_probs)
+            policy_loss = -(log_probs * action_onehot) * advantage
+            loss = 0.5 * tf.reduce_mean(val_loss) + \
+                tf.reduce_mean(policy_loss) + 0.01 * entropy_loss
+        grads = tape.gradient(loss, model.trainable_weights)
+        optimizer.apply_gradients(zip(grads, model.trainable_weights))
+        eval_score = eval(model, eval_env, 10, action_space_size)
+        print(
+            'Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
     env.close()
 
 
