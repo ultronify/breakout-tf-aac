@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 import tensorflow as tf
+from data_cleaning import sanitize_state
 from tqdm import tqdm
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Conv2D, BatchNormalization, Flatten
@@ -68,7 +69,8 @@ def eval(model, env, max_eps, action_space_size, max_trail_steps, render):
         while not done and trail_step_cnt < max_trail_steps:
             if render:
                 env.render()
-            action_dist, _ = model(tf.convert_to_tensor([state], dtype=tf.float32))
+            sanitized_state = sanitize_state(np.array(state))
+            action_dist, _ = model(tf.convert_to_tensor([sanitized_state], dtype=tf.float32))
             action = sample_action(
                 action_space_size, action_dist.numpy()[0], use_max=True)
             state, reward, done, _ = env.step(action)
@@ -79,10 +81,10 @@ def eval(model, env, max_eps, action_space_size, max_trail_steps, render):
     return avg_reward
 
 
-def train(max_eps=1000, gamma=0.99, render=False):
+def train(max_eps=1000, gamma=0.99, render=False, max_trail_steps=200):
     env = gym.make('Breakout-v0')
     eval_env = gym.make('Breakout-v0')
-    state_shape = env.observation_space.shape
+    state_shape = sanitize_state(np.array(env.reset())).shape
     action_space_size = env.action_space.n
     print('Construct model with action space size {0} and state shape {1}'.format(
         action_space_size, state_shape))
@@ -91,20 +93,20 @@ def train(max_eps=1000, gamma=0.99, render=False):
     for eps in range(max_eps):
         done = False
         state = env.reset()
-        max_trail_steps = 200
         trail_step_cnt = 0
         actions, rewards, states = [], [], []
         while not done and trail_step_cnt < max_trail_steps:
             if render:
                 env.render()
+            sanitized_state = sanitize_state(np.array(state))
             action_dist, _ = model(tf.convert_to_tensor(
-                [state], dtype=tf.float32))
+                [sanitized_state], dtype=tf.float32))
             action = sample_action(action_space_size, action_dist.numpy()[0])
             next_state, reward, done, _ = env.step(action)
             if reward == 0:
                 reward = -0.1
             actions.append(action)
-            states.append(state)
+            states.append(sanitized_state)
             rewards.append(reward)
             state = next_state
             trail_step_cnt += 1
