@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 import tensorflow as tf
-from tensorflow import optimizers
+from tqdm import tqdm
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Conv2D, BatchNormalization, Flatten
 
@@ -12,19 +12,18 @@ class ActorCriticModel(Model):
         self.state_shape = state_shape
         self.action_space_state = action_space_size
         # Image feature extraction layers
-        self.conv_input = Conv2D(
-            4, (3, 3), (2, 2), activation='relu', input_shape=self.state_shape)
-        self.conv_0 = Conv2D(8, (3, 3), (2, 2))
+        self.conv_input = Conv2D(16, (8, 8), strides=(4, 4), activation='relu', kernel_initializer='he_uniform', input_shape=self.state_shape, trainable=True)
+        self.conv_0 = Conv2D(32, (4, 4), strides=(2, 2), activation='relu', kernel_initializer='he_uniform', trainable=True)
+        # self.conv_input = tf.keras.applications.MobileNetV2(input_shape=self.state_shape, alpha=1.0, include_top=False, weights='imagenet')
+        # self.conv_input.trainable = False
         self.bn_0 = BatchNormalization()
         self.flatten_layer = Flatten()
         # Actor layers
-        self.actor_dense_0 = Dense(128, activation='relu')
-        self.actor_dense_1 = Dense(64, activation='relu')
+        self.actor_dense_0 = Dense(64, kernel_initializer='he_uniform', activation='relu')
         self.actor_output = Dense(
             self.action_space_state, activation='softmax')
         # Critic layers
-        self.critic_dense_0 = Dense(128, activation='relu')
-        self.critic_dense_1 = Dense(64, activation='relu')
+        self.critic_dense_0 = Dense(64, kernel_initializer='he_uniform', activation='relu')
         self.critic_output = Dense(1, activation='linear')
 
     def call(self, inputs, **kwargs):
@@ -35,11 +34,9 @@ class ActorCriticModel(Model):
         x = self.flatten_layer(x)
         # Actor network
         p = self.actor_dense_0(x)
-        p = self.actor_dense_1(p)
         p = self.actor_output(p)
         # Critic network
         v = self.critic_dense_0(x)
-        v = self.critic_dense_1(v)
         v = self.critic_output(v)
         return p, v
 
@@ -60,22 +57,28 @@ def compute_discounted_rewards(rewards, gamma):
     return discounted_rewards[::-1]
 
 
-def eval(model, env, max_eps, action_space_size):
+def eval(model, env, max_eps, action_space_size, max_trail_steps):
     total_reward = 0.0
-    for _ in range(max_eps):
+    print('Start running eval')
+    for eps in range(max_eps):
         done = False
         state = env.reset()
-        while not done:
-            action_dist, _ = model(tf.convert_to_tensor([state]))
+        # print('Start running eval on episode {0}/{1}'.format(eps, max_eps))
+        trail_step_cnt = 0
+        while not done and trail_step_cnt < max_trail_steps:
+            env.render()
+            action_dist, _ = model(tf.convert_to_tensor([state], dtype=tf.float32))
             action = sample_action(
                 action_space_size, action_dist.numpy()[0], use_max=True)
             state, reward, done, _ = env.step(action)
             total_reward += reward
+            trail_step_cnt += 1
+        # print('Finished running eval on episode {0}/{1}'.format(eps, max_eps))
     avg_reward = total_reward / max_eps
     return avg_reward
 
 
-def train(max_eps=5, gamma=0.99):
+def train(max_eps=1000, gamma=0.99):
     env = gym.make('Breakout-v0')
     eval_env = gym.make('Breakout-v0')
     state_shape = env.observation_space.shape
@@ -87,35 +90,63 @@ def train(max_eps=5, gamma=0.99):
     for eps in range(max_eps):
         done = False
         state = env.reset()
+        max_trail_steps = 200
+        trail_step_cnt = 0
         actions, rewards, states = [], [], []
-        while not done:
+        while not done and trail_step_cnt < max_trail_steps:
+            env.render()
             action_dist, _ = model(tf.convert_to_tensor(
                 [state], dtype=tf.float32))
             action = sample_action(action_space_size, action_dist.numpy()[0])
             next_state, reward, done, _ = env.step(action)
+            if reward == 0:
+                reward = -0.1
             actions.append(action)
             states.append(state)
             rewards.append(reward)
             state = next_state
+            trail_step_cnt += 1
+            # print('Sampling step and got reward {0}'.format(reward))
         # Calculate loss and gradients
-        with tf.GradientTape() as tape:
-            probs_raw, vals = model(
-                tf.convert_to_tensor(states, dtype=tf.float32))
-            probs = tf.clip_by_value(probs_raw, 1e-10, 1-1e-10)
-            log_probs = tf.math.log(probs)
-            q_vals = tf.convert_to_tensor(
-                compute_discounted_rewards(rewards, gamma), dtype=tf.float32)
-            action_onehot = tf.one_hot(actions, action_space_size)
-            advantage = q_vals - vals
-            val_loss = advantage ** 2
-            entropy_loss = -tf.reduce_sum(probs, log_probs)
-            policy_loss = -(log_probs * action_onehot) * advantage
-            loss = 0.5 * tf.reduce_mean(val_loss) + \
-                tf.reduce_mean(policy_loss) + 0.01 * entropy_loss
-        grads = tape.gradient(loss, model.trainable_weights)
-        optimizer.apply_gradients(zip(grads, model.trainable_weights))
-        eval_score = eval(model, eval_env, 10, action_space_size)
-        print(
-            'Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
+        # print('Finished sampling trajectory with size {0}'.format(len(states)))
+        discounted_rewards = compute_discounted_rewards(rewards, gamma)
+        action_onehot_data = tf.one_hot(actions, action_space_size)
+        """
+        print('states shape: {0}, actions shape: {1}, q vals shape: {2}'.format(
+            tf.shape(tf.convert_to_tensor(states, dtype=tf.float32)),
+            tf.shape(action_onehot_data),
+            tf.shape(tf.convert_to_tensor(discounted_rewards, dtype=tf.float32)),
+        ))
+        """
+        dataset = tf.data.Dataset.from_tensor_slices((
+            tf.convert_to_tensor(states, dtype=tf.float32),
+            action_onehot_data,
+            tf.convert_to_tensor(discounted_rewards, dtype=tf.float32)
+        ))
+        # print('dataset: ', dataset)
+        # print('dataset size: ', len(dataset))
+        for batch in tqdm(dataset.batch(32)):
+            # print('batch size: ', len(batch))
+            with tf.GradientTape() as tape:
+                # print('states shape: {0}, actions shape: {1}, q vals shape: {2}'.format(tf.shape(batch[0]), tf.shape(batch[1]), tf.shape(batch[2])))
+                probs_raw, vals = model(batch[0])
+                # print('probs shape: {0}, vals shape: {1}'.format(tf.shape(probs_raw), tf.shape(vals)))
+                probs = tf.clip_by_value(probs_raw, 1e-10, 1-1e-10)
+                log_probs = tf.math.log(probs)
+                q_vals = batch[2]
+                action_onehot = batch[1]
+                advantage = q_vals - vals
+                val_loss = advantage ** 2
+                entropy_loss = -tf.reduce_sum(probs * log_probs)
+                policy_loss = -(log_probs * action_onehot) * advantage
+                loss = 0.5 * tf.reduce_mean(val_loss) + \
+                    tf.reduce_mean(policy_loss) + 0.01 * entropy_loss
+            # print('Finished calculating loss')
+            grads = tape.gradient(loss, model.trainable_weights)
+            # print('Finished calculating gradients')
+            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+            # print('Finished applying gradients')
+        if eps % 10 == 0:
+            eval_score = eval(model, eval_env, 1, action_space_size, max_trail_steps)
+            print('Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
     env.close()
-
