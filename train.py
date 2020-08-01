@@ -149,6 +149,6 @@ def train(max_eps=1000, gamma=0.99, render=False):
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
             # print('Finished applying gradients')
         if eps % 10 == 0:
-            eval_score = eval(model, eval_env, 1, action_space_size, max_trail_steps)
+            eval_score = eval(model, eval_env, 1, action_space_size, max_trail_steps, render)
             print('Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
     env.close()
