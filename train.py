@@ -81,15 +81,19 @@ def eval(model, env, max_eps, action_space_size, max_trail_steps, render):
     return avg_reward
 
 
-def train(max_eps=1000, gamma=0.99, render=False, max_trail_steps=200):
+def train(max_eps=1000, gamma=0.99, render=False, initial_max_trail_steps=200):
     env = gym.make('Breakout-v0')
     eval_env = gym.make('Breakout-v0')
+    if render:
+        env.render()
+        eval_env.render()
     state_shape = sanitize_state(np.array(env.reset())).shape
     action_space_size = env.action_space.n
     print('Construct model with action space size {0} and state shape {1}'.format(
         action_space_size, state_shape))
     model = ActorCriticModel(state_shape, action_space_size)
     optimizer = tf.optimizers.Adam(learning_rate=1e-3)
+    max_trail_steps = initial_max_trail_steps
     for eps in range(max_eps):
         done = False
         state = env.reset()
@@ -111,6 +115,7 @@ def train(max_eps=1000, gamma=0.99, render=False, max_trail_steps=200):
             state = next_state
             trail_step_cnt += 1
             # print('Sampling step and got reward {0}'.format(reward))
+        max_trail_steps += 10
         # Calculate loss and gradients
         # print('Finished sampling trajectory with size {0}'.format(len(states)))
         discounted_rewards = compute_discounted_rewards(rewards, gamma)
