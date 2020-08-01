@@ -143,11 +143,11 @@ def train(max_eps=1000, gamma=0.99, render=False, initial_max_trail_steps=200):
                 probs = tf.clip_by_value(probs_raw, 1e-10, 1-1e-10)
                 log_probs = tf.math.log(probs)
                 q_vals = batch[2]
-                action_onehot = batch[1]
                 advantage = q_vals - vals
+                action_onehot = batch[1]
                 val_loss = advantage ** 2
-                entropy_loss = -tf.reduce_sum(probs * log_probs)
                 policy_loss = -(log_probs * action_onehot) * advantage
+                entropy_loss = -tf.reduce_sum(probs * log_probs)
                 loss = 0.5 * tf.reduce_mean(val_loss) + \
                     tf.reduce_mean(policy_loss) + 0.01 * entropy_loss
             # print('Finished calculating loss')
@@ -155,7 +155,7 @@ def train(max_eps=1000, gamma=0.99, render=False, initial_max_trail_steps=200):
             # print('Finished calculating gradients')
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
             # print('Finished applying gradients')
-        if eps % 10 == 0:
-            eval_score = eval(model, eval_env, 1, action_space_size, max_trail_steps, render)
+        if eps % 5 == 0:
+            eval_score = eval(model, eval_env, 5, action_space_size, max_trail_steps, render)
             print('Finished training {0}/{1} with score {2}'.format(eps, max_eps, eval_score))
     env.close()
