@@ -57,7 +57,7 @@ def compute_discounted_rewards(rewards, gamma):
     return discounted_rewards[::-1]
 
 
-def eval(model, env, max_eps, action_space_size, max_trail_steps):
+def eval(model, env, max_eps, action_space_size, max_trail_steps, render):
     total_reward = 0.0
     print('Start running eval')
     for eps in range(max_eps):
@@ -66,7 +66,8 @@ def eval(model, env, max_eps, action_space_size, max_trail_steps):
         # print('Start running eval on episode {0}/{1}'.format(eps, max_eps))
         trail_step_cnt = 0
         while not done and trail_step_cnt < max_trail_steps:
-            env.render()
+            if render:
+                env.render()
             action_dist, _ = model(tf.convert_to_tensor([state], dtype=tf.float32))
             action = sample_action(
                 action_space_size, action_dist.numpy()[0], use_max=True)
@@ -78,7 +79,7 @@ def eval(model, env, max_eps, action_space_size, max_trail_steps):
     return avg_reward
 
 
-def train(max_eps=1000, gamma=0.99):
+def train(max_eps=1000, gamma=0.99, render=False):
     env = gym.make('Breakout-v0')
     eval_env = gym.make('Breakout-v0')
     state_shape = env.observation_space.shape
@@ -94,7 +95,8 @@ def train(max_eps=1000, gamma=0.99):
         trail_step_cnt = 0
         actions, rewards, states = [], [], []
         while not done and trail_step_cnt < max_trail_steps:
-            env.render()
+            if render:
+                env.render()
             action_dist, _ = model(tf.convert_to_tensor(
                 [state], dtype=tf.float32))
             action = sample_action(action_space_size, action_dist.numpy()[0])
